@@ -1,72 +1,130 @@
-﻿# Cargar el modulo de Active Directory
-Import-Module ActiveDirectory
+#!/bin/bash
 
-# Guardar el nombre base del dominio (DC=walter,DC=aws)
-$dominio = (Get-ADDomain).DistinguishedName
+# ==========================================
+# CONFIGURACIÓN DEL DOMINIO OPENLDAP
+# ==========================================
+DOMINIO="dc=walter2026,dc=ldap"
+USUARIO_ADMIN="cn=admin,$DOMINIO"
 
-do {
-    # 1) Mostrar el menu
-    Write-Host "1. Informacion del dominio"
-    Write-Host "2. Crear OU"
-    Write-Host "3. Crear grupo"
-    Write-Host "4. Crear usuario"
-    Write-Host "5. Salir"
+# ==========================================
+# FUNCIONES
+# ==========================================
 
-    # 2) Leer la opcion
-    $opcion = Read-Host "Elige una opcion"
+# Pedir contraseña del administrador
+pedir_clave() {
+    echo "Contraseña de admin LDAP:"
+    read -s admin_pass
+    echo ""
+}
 
-    # 3) Segun la opcion, hacer una cosa u otra
-    switch ($opcion) {
-        "1" {
-            # Opcion 1: Informacion del dominio
-            Write-Host "Nombre del equipo: $env:COMPUTERNAME"
-            Write-Host "Nombre del dominio: $((Get-ADDomain).DNSRoot)"
-            Write-Host "Numero de OUs: $((Get-ADOrganizationalUnit -Filter *).Count)"
-            Write-Host "Numero de grupos: $((Get-ADGroup -Filter *).Count)"
-            Write-Host "Numero de usuarios: $((Get-ADUser -Filter *).Count)"
-        }
-        "2" {
-            # Opcion 2: Crear OU
-            $nombreOU = Read-Host "Nombre de la nueva OU"
-            New-ADOrganizationalUnit -Name $nombreOU
-            Write-Host "OU creada correctamente"
-        }
-        "3" {
-            # Opcion 3: Crear grupo
-            $nombreGrupo = Read-Host "Nombre del grupo"
-            $ou = Read-Host "Nombre de la OU donde se creara"
-            $ruta = "OU=$ou,$dominio"
-            New-ADGroup -Name $nombreGrupo -GroupScope Global -Path $ruta
-            Write-Host "Grupo creado correctamente"
-        }
-        "4" {
-            # Opcion 4: Crear usuario
-            $nombre = Read-Host "Nombre"
-            $apellido = Read-Host "Apellido"
-            $username = Read-Host "Nombre de usuario (login)"
-            $ou = Read-Host "OU donde ira el usuario"
-            $grupo = Read-Host "Grupo al que se agregara"
-            $clave = Read-Host "Contrasena inicial" -AsSecureString
+# Opción 1: Eliminar correo de un usuario
+eliminar_correo() {
+    echo ""
+    echo "--- ELIMINAR CORREO DE UN USUARIO ---"
+    echo "UID del usuario (ej: walteralu1):"
+    read uid_user
+    echo "Unidad Organizativa (Alumnado/Profesorado):"
+    read ou_user
+    pedir_clave
 
-            $ruta = "OU=$ou,$dominio"
-            $upn = "$username@$((Get-ADDomain).DNSRoot)"
+    # Escribimos el archivo LDIF temporal
+    echo "dn: cn=${uid_user},ou=${ou_user},${DOMINIO}" > del_mail.ldif
+    echo "changetype: modify" >> del_mail.ldif
+    echo "delete: mail" >> del_mail.ldif
 
-            New-ADUser -Name "$nombre$apellido" `
-                       -SamAccountName $username `
-                       -UserPrincipalName $upn `
-                       -Path $ruta `
-                       -AccountPassword $clave `
-                       -Enabled $true `
-                       -ChangePasswordAtLogon $true
+    # Modificamos usando el archivo -f y luego lo borramos
+    ldapmodify -x -D "$USUARIO_ADMIN" -w "$admin_pass" -f del_mail.ldif
+    rm -f del_mail.ldif
+}
 
-            Add-ADGroupMember -Identity $grupo -Members $username
-            Write-Host "Usuario creado e introducido en el grupo correctamente"
-        }
-        "5" {
-            Write-Host "Adios"
-        }
-        default {
-            Write-Host "Opcion no valida"
-        }
-    }
-} while ($opcion -ne "5")
+# Opción 2: Modificar correo de un usuario
+modificar_correo() {
+    echo ""
+    echo "--- MODIFICAR CORREO DE UN USUARIO ---"
+    echo "UID del usuario (ej: walteralu2):"
+    read uid_user
+    echo "Unidad Organizativa (Alumnado/Profesorado):"
+    read ou_user
+    echo "Nuevo correo:"
+    read nuevo_mail
+    pedir_clave
+
+    # Generación del archivo LDIF temporal para la modificación
+    echo "dn: cn=${uid_user},ou=${ou_user},${DOMINIO}" > mod_mail.ldif
+    echo "changetype: modify" >> mod_mail.ldif
+    echo "replace: mail" >> mod_mail.ldif
+    echo "mail: ${nuevo_mail}" >> mod_mail.ldif
+
+    # Modificamos usando el archivo -f y luego lo borramos
+    ldapmodify -x -D "$USUARIO_ADMIN" -w "$admin_pass" -f mod_mail.ldif
+    rm -f mod_mail.ldif
+}
+
+# Opción 3a: Buscar un usuario concreto
+buscar_usuario() {
+    echo "UID del usuario a buscar:"
+    read busca_uid
+    echo ""
+    ldapsearch -x -b "$DOMINIO" "(uid=$busca_uid)"
+}
+
+# Opción 3b: Listar todos los usuarios
+listar_usuarios() {
+    echo ""
+    echo "=== LISTADO DE USUARIOS (NOMBRE Y CORREO) ==="
+    ldapsearch -x -b "$DOMINIO" "(objectClass=inetOrgPerson)" cn mail
+}
+
+# ==========================================
+# MENÚ PRINCIPAL (BUCLE)
+# ==========================================
+while true; do
+    echo "=========================================="
+    echo "    MENÚ DE GESTIÓN OPENLDAP - WALTER"
+    echo "=========================================="
+    echo "1. Eliminar correo de un usuario"
+    echo "2. Modificar correo de un usuario"
+    echo "3. Realizar búsquedas (Usuario o Listado)"
+    echo "4. Salir"
+    echo "=========================================="
+    echo "Seleccione una opción [1-4]:"
+    read opcion
+
+    case "$opcion" in
+        1)
+            eliminar_correo
+            echo "Presione Enter para continuar..."
+            read pausa
+            ;;
+        2)
+            modificar_correo
+            echo "Presione Enter para continuar..."
+            read pausa
+            ;;
+        3)
+            echo ""
+            echo "a) Buscar un usuario concreto"
+            echo "b) Listar TODOS los usuarios"
+            echo "Seleccione subopción [a/b]:"
+            read subopcion
+
+            if [ "$subopcion" = "a" ]; then
+                buscar_usuario
+            elif [ "$subopcion" = "b" ]; then
+                listar_usuarios
+            else
+                echo "Opción no válida."
+            fi
+            echo "Presione Enter para continuar..."
+            read pausa
+            ;;
+        4)
+            echo "Saliendo del script..."
+            exit
+            ;;
+        *)
+            echo "Opción no válida, intente de nuevo."
+            read pausa
+            ;;
+    esac
+done
